@@ -62,11 +62,18 @@ export default function App() {
   const [toast, setToast] = useState('')
   const refresh = useCallback(async () => {
     setLoading(true); setError('')
-    try {
-      const [h, p, w, i, r, a, po] = await Promise.all([api.health(), api.products(), api.warehouses(), api.inventory(), api.runs(), api.approvals(), api.purchaseOrders()])
-      setHealth(h.status); setProducts(p); setWarehouses(w); setInventory(i); setRuns(r); setApprovals(a); setOrders(po)
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load ProcureAI data'); setHealth('Unavailable') }
-    finally { setLoading(false) }
+    const results = await Promise.allSettled([api.health(), api.products(), api.warehouses(), api.inventory(), api.runs(), api.approvals(), api.purchaseOrders()])
+    const [healthResult, productsResult, warehousesResult, inventoryResult, runsResult, approvalsResult, ordersResult] = results
+    const failures: string[] = []
+    if (healthResult.status === 'fulfilled') setHealth(healthResult.value.status); else { setHealth('Unavailable'); failures.push(`health: ${errorMessage(healthResult.reason)}`) }
+    if (productsResult.status === 'fulfilled') setProducts(productsResult.value); else failures.push(`catalog: ${errorMessage(productsResult.reason)}`)
+    if (warehousesResult.status === 'fulfilled') setWarehouses(warehousesResult.value); else failures.push(`warehouses: ${errorMessage(warehousesResult.reason)}`)
+    if (inventoryResult.status === 'fulfilled') setInventory(inventoryResult.value); else failures.push(`inventory: ${errorMessage(inventoryResult.reason)}`)
+    if (runsResult.status === 'fulfilled') setRuns(runsResult.value); else failures.push(`recent runs: ${errorMessage(runsResult.reason)}`)
+    if (approvalsResult.status === 'fulfilled') setApprovals(approvalsResult.value); else failures.push(`approvals: ${errorMessage(approvalsResult.reason)}`)
+    if (ordersResult.status === 'fulfilled') setOrders(ordersResult.value); else failures.push(`purchase orders: ${errorMessage(ordersResult.reason)}`)
+    if (failures.length) setError(`Some workspace data could not be refreshed: ${failures.join('; ')}`)
+    setLoading(false)
   }, [])
   useEffect(() => { void refresh() }, [refresh])
   useEffect(() => { if (location.pathname === '/') navigate('/overview', { replace: true }) }, [location.pathname, navigate])
@@ -107,6 +114,8 @@ export default function App() {
     {toast && <div className="toast" role="status"><CheckCircle2 size={17} />{toast}<button onClick={() => setToast('')} aria-label="Dismiss notification"><X size={15} /></button></div>}
   </div>
 }
+
+function errorMessage(reason: unknown) { return reason instanceof Error ? reason.message : 'request failed' }
 
 function pageSubtitle(page: Page) {
   const copy: Record<Page, string> = {
@@ -166,6 +175,14 @@ function InventoryPage({ inventory }: ViewProps) {
   </section>
 }
 
+/** Form presets for the four assignment scenarios. They describe the situation only, never the expected decision. */
+const SCENARIO_PRESETS = [
+  { id: 's1', label: '1 · Review an 800-unit recommendation (WM-001 · DEL-01)', sku: 'WM-001', warehouse: 'DEL-01', quantity: 800, instruction: '' },
+  { id: 's2', label: '2 · Supplier shortfall on a 500-unit PO (KB-002 · BLR-02)', sku: 'KB-002', warehouse: 'BLR-02', quantity: 250, instruction: 'Supplier Apex Peripherals has informed us that PO-BLR-SCN2-001 (500 units) can currently supply only 250 units. Determine what should happen next for the remaining quantity: source elsewhere, consider another supplier, raise an additional PO, rely on existing inventory, or escalate.' },
+  { id: 's3', label: '3 · Demand / forecast has changed (HS-003 · MUM-03)', sku: 'HS-003', warehouse: 'MUM-03', quantity: 150, instruction: 'This product was expected to have normal demand, but actual sales have increased significantly and a new forecast run was generated today. An existing purchase order is already open. Determine whether the purchasing plan needs to change.' },
+  { id: 's4', label: '4 · Purchasing constraint (MN-004 · HYD-04)', sku: 'MN-004', warehouse: 'HYD-04', quantity: 300, instruction: 'The replenishment system recommends 300 units. Check whether any purchasing constraint prevents this purchase and determine an appropriate course of action rather than executing the original recommendation blindly.' },
+]
+
 function AgentPage(props: ViewProps) {
   const [selectedRunId, setSelectedRunId] = useState(''); const [events, setEvents] = useState<AgentEvent[]>([]); const [eventError, setEventError] = useState(''); const [run, setRun] = useState<AgentRun | null>(null)
   const [submitting, setSubmitting] = useState(false); const [loadRun, setLoadRun] = useState(false)
@@ -180,6 +197,7 @@ function AgentPage(props: ViewProps) {
   return <div className="content-grid agent-grid"><div className="agent-left">
     <section className="panel" id="investigation-form"><PanelHeader title="Start an investigation" detail="The recommendation quantity is a starting input, not a purchase instruction." />
       <form className="form-grid" onSubmit={(event) => void submit(event)}>
+        <label className="wide-label">Assignment scenario preset<select defaultValue="" aria-label="Assignment scenario preset" onChange={(event) => { const preset = SCENARIO_PRESETS.find((item) => item.id === event.target.value); if (preset) { setProductSku(preset.sku); setWarehouseCode(preset.warehouse); setQuantity(String(preset.quantity)); setHorizon('30'); setInstruction(preset.instruction) } }}><option value="">Custom investigation</option>{SCENARIO_PRESETS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select><small>Presets only fill the form; Gemini still chooses which evidence to gather.</small></label>
         <label>Product<select value={productSku} onChange={(event) => setProductSku(event.target.value)} required>{props.products.filter((p) => p.active).map((p) => <option key={p.id} value={p.sku}>{p.name} · {p.sku}</option>)}</select></label>
         <label>Warehouse<select value={warehouseCode} onChange={(event) => setWarehouseCode(event.target.value)} required>{props.warehouses.filter((w) => w.active).map((w) => <option key={w.id} value={w.code}>{w.name} · {w.code}</option>)}</select></label>
         <label>Original recommended quantity<input type="number" min="1" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} required /><small>Units of measure come from the selected product.</small></label>

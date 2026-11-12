@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
-import com.procureai.domain.entity.AgentRun;
 import com.procureai.domain.entity.DemandForecast;
 import com.procureai.domain.entity.Inventory;
 import com.procureai.domain.entity.Product;
@@ -21,11 +20,9 @@ import com.procureai.domain.entity.StorageCapacity;
 import com.procureai.domain.entity.Supplier;
 import com.procureai.domain.entity.SupplierProduct;
 import com.procureai.domain.entity.Warehouse;
-import com.procureai.domain.enums.AgentRunStatus;
 import com.procureai.domain.enums.PurchaseOrderStatus;
 import com.procureai.domain.enums.SupplierOfferStatus;
 import com.procureai.domain.enums.SupplierStatus;
-import com.procureai.repository.AgentRunRepository;
 import com.procureai.repository.DemandForecastRepository;
 import com.procureai.repository.InventoryRepository;
 import com.procureai.repository.ProductRepository;
@@ -53,7 +50,6 @@ public class DemoDataSeeder implements CommandLineRunner {
     static final String ALTERNATE_SUPPLIER_CODE = "SUP-METROTECH";
     static final String OPEN_PO_NUMBER = "PO-DEL-DEMO-001";
     static final String DRAFT_PO_NUMBER = "PO-DEL-DEMO-002";
-    static final String DEMO_RUN_SUMMARY = "Demo scenario: 800-unit Wireless Mouse recommendation awaiting review.";
     static final UUID FORECAST_RUN_ID = UUID.fromString("b206d13a-1533-4e11-a555-180a555b0828");
     static final int FORECAST_HORIZON_DAYS = 30;
     static final String FORECAST_MODEL_VERSION = "procureai-demo-v1";
@@ -74,7 +70,6 @@ public class DemoDataSeeder implements CommandLineRunner {
     private final StorageCapacityRepository storageCapacityRepository;
     private final PurchaseOrderRepository purchaseOrderRepository;
     private final PurchaseOrderItemRepository purchaseOrderItemRepository;
-    private final AgentRunRepository agentRunRepository;
 
     public DemoDataSeeder(
             ProductRepository productRepository,
@@ -87,8 +82,7 @@ public class DemoDataSeeder implements CommandLineRunner {
             PurchasingBudgetRepository purchasingBudgetRepository,
             StorageCapacityRepository storageCapacityRepository,
             PurchaseOrderRepository purchaseOrderRepository,
-            PurchaseOrderItemRepository purchaseOrderItemRepository,
-            AgentRunRepository agentRunRepository
+            PurchaseOrderItemRepository purchaseOrderItemRepository
     ) {
         this.productRepository = productRepository;
         this.warehouseRepository = warehouseRepository;
@@ -101,7 +95,6 @@ public class DemoDataSeeder implements CommandLineRunner {
         this.storageCapacityRepository = storageCapacityRepository;
         this.purchaseOrderRepository = purchaseOrderRepository;
         this.purchaseOrderItemRepository = purchaseOrderItemRepository;
-        this.agentRunRepository = agentRunRepository;
     }
 
     @Override
@@ -152,7 +145,6 @@ public class DemoDataSeeder implements CommandLineRunner {
         seedStorageCapacity(warehouse);
         seedOpenPurchaseOrder(primarySupplier, warehouse, primaryOffer);
         seedDraftPurchaseOrder(alternateSupplier, warehouse, alternateOffer);
-        seedRecommendationRun(product, warehouse);
 
         LOGGER.info("Initialized ProcureAI demo purchasing data for SKU {} at warehouse {}.",
                 PRODUCT_SKU, WAREHOUSE_CODE);
@@ -328,22 +320,4 @@ public class DemoDataSeeder implements CommandLineRunner {
                 && order.getWarehouse().getId().equals(warehouse.getId());
     }
 
-    private void seedRecommendationRun(Product product, Warehouse warehouse) {
-        boolean exists = agentRunRepository.findByProductAndWarehouse(product, warehouse).stream()
-                .anyMatch(run -> Long.valueOf(800L).equals(run.getInputRecommendationUnits())
-                        && DEMO_RUN_SUMMARY.equals(run.getDecisionSummary()));
-        if (!exists) {
-            agentRunRepository.save(new AgentRun(
-                    product,
-                    warehouse,
-                    800L,
-                    AgentRunStatus.RUNNING,
-                    null,
-                    null,
-                    DEMO_RUN_SUMMARY,
-                    LocalDateTime.now(Clock.systemUTC()),
-                    null
-            ));
-        }
-    }
 }

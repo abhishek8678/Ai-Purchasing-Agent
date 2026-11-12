@@ -1,6 +1,7 @@
 package com.procureai.approval.service;
 
 import java.util.ArrayList;
+import java.time.LocalDate;
 import java.util.List;
 
 import com.procureai.domain.entity.PurchaseOrder;
@@ -32,6 +33,9 @@ public class PurchaseOrderReadBackVerifier {
         if (order.getStatus() != PurchaseOrderStatus.APPROVED) discrepancies.add("PO status is not APPROVED.");
         if (!approval.getCurrencyCode().equals(order.getCurrencyCode())) discrepancies.add("PO currency differs from the approved currency.");
         if (!approval.getIdempotencyKey().equals(order.getIdempotencyKey())) discrepancies.add("PO idempotency key differs from the approval key.");
+        if (!approval.getApproverIdentity().equals(order.getApprovedBy())) discrepancies.add("PO approver differs from the approved execution reference.");
+        if (approval.getDecisionAt() == null || order.getApprovedAt() == null
+                || !approval.getDecisionAt().equals(order.getApprovedAt())) discrepancies.add("PO approval time differs from the approval record.");
         if (lines.size() != 1) {
             discrepancies.add("PO does not contain exactly one persisted line.");
         } else {
@@ -49,6 +53,10 @@ public class PurchaseOrderReadBackVerifier {
                 discrepancies.add("PO line order-time unit price differs from the approved price.");
             } else if (line.getUnitPriceAtOrder().signum() < 0) {
                 discrepancies.add("PO line order-time unit price is invalid.");
+            }
+            LocalDate expectedDelivery = order.getOrderDate().plusDays(approval.getSupplierProduct().getLeadTimeDays());
+            if (!expectedDelivery.equals(line.getExpectedDeliveryDate())) {
+                discrepancies.add("PO line expected delivery date differs from the approved offer lead time.");
             }
         }
         return new Verification(discrepancies.isEmpty(), List.copyOf(discrepancies));

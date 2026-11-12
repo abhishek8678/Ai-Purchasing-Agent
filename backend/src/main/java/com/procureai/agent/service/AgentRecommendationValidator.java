@@ -52,6 +52,10 @@ public class AgentRecommendationValidator {
                 && !returnedEvidenceReferences.containsAll(recommendation.evidenceReferences())) {
             errors.add("One or more evidence references were not returned by a tool.");
         }
+        if ((recommendation.decision() == PurchaseDecision.ACCEPT || recommendation.decision() == PurchaseDecision.MODIFY)
+                && (recommendation.evidenceReferences() == null || recommendation.evidenceReferences().isEmpty())) {
+            errors.add("Actionable recommendations require at least one evidence reference returned by this run.");
+        }
         if (recommendation.constraintEvaluationReferences() != null
                 && !returnedConstraintReferences.containsAll(recommendation.constraintEvaluationReferences())) {
             errors.add("One or more constraint references were not returned by evaluate_purchase_constraints.");
@@ -64,11 +68,41 @@ public class AgentRecommendationValidator {
                 errors.add("Selected supplier or offer identifier was not returned by supplier evidence.");
             }
         }
+        if ((recommendation.decision() == PurchaseDecision.ACCEPT || recommendation.decision() == PurchaseDecision.MODIFY)
+                && recommendation.selectedSupplierProductId() != null
+                && (recommendation.evidenceReferences() == null
+                || !recommendation.evidenceReferences().contains("supplier-offer:" + recommendation.selectedSupplierProductId()))) {
+            errors.add("A selected supplier offer must be referenced by supplier evidence from this run.");
+        }
         if (recommendation.confidence() != null && (recommendation.confidence().compareTo(BigDecimal.ZERO) < 0
                 || recommendation.confidence().compareTo(BigDecimal.ONE) > 0)) {
             errors.add("Confidence must be between 0 and 1.");
         }
         return List.copyOf(errors);
+    }
+
+    /**
+     * An actionable recommendation (ACCEPT / MODIFY) must name a supplier offer and cite a constraint evaluation from
+     * this run that evaluated exactly that offer and quantity, with every hard constraint passing. This stops the
+     * model from proposing a purchase it never checked against budget, storage, MOQ and pack size.
+     */
+    public List<String> validateConstraintCoverage(PurchasingRecommendation recommendation,
+                                                   Map<String, ConstraintCheck> constraintChecks) {
+        if (recommendation == null || (recommendation.decision() != PurchaseDecision.ACCEPT
+                && recommendation.decision() != PurchaseDecision.MODIFY)) {
+            return List.of();
+        }
+        if (recommendation.selectedSupplierProductId() == null) {
+            return List.of("Actionable recommendations must select a supplier offer.");
+        }
+        List<String> cited = recommendation.constraintEvaluationReferences() == null
+                ? List.of() : recommendation.constraintEvaluationReferences();
+        boolean covered = cited.stream().map(constraintChecks::get).anyMatch(check -> check != null
+                && check.allPassed()
+                && recommendation.selectedSupplierProductId().equals(check.supplierProductId())
+                && check.proposedUnits().equals(recommendation.proposedQuantity()));
+        return covered ? List.of() : List.of("Actionable recommendations must cite a passing constraint evaluation "
+                + "from this run for the selected supplier offer and proposed quantity.");
     }
 
     private void validateStrings(List<String> values, String field, List<String> errors) {

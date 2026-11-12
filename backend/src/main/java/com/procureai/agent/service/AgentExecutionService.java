@@ -48,7 +48,7 @@ public class AgentExecutionService {
 
             Compare supplier availability, unit price, lead time, MOQ and pack size when the evidence supports it. Consider inventory, forecasts, confirmed and uncertain incoming supply, budget, storage, and explicit constraints as relevant. Explain uncertainty, stale or missing evidence, risks, and unresolved questions. Never invent facts or identifiers. Do not treat a single constraint failure as an automatic final decision if more evidence or an alternative could resolve it. Do not create or submit purchase orders, change inventory, seek approval, or claim execution. Do not provide or request hidden chain-of-thought. Provide only a concise rationale supported by the evidence.
 
-            When ready, return exactly one JSON object, with no Markdown fences or text outside it, matching these fields: decision (ACCEPT, MODIFY, REJECT, or INVESTIGATE), originalRecommendedQuantity (integer from the run request), proposedQuantity (positive integer for ACCEPT or MODIFY; null for REJECT or INVESTIGATE), selectedSupplierId (integer or null), selectedSupplierProductId (integer or null), recommendationSummary (concise string), evidenceReferences (array of exact evidenceReference values returned by tools), keySupportingFacts (array of concise factual strings), risks (array of strings), unresolvedQuestions (array of strings), constraintEvaluationReferences (array of exact constraint evidence references returned by evaluate_purchase_constraints), confidence (number from 0 to 1 or null). ACCEPT keeps the original quantity. MODIFY proposes a different positive quantity. REJECT and INVESTIGATE do not claim a proposed purchase quantity. Use INVESTIGATE when evidence is insufficient, inconsistent, stale, or needs clarification.
+            When ready, return exactly one JSON object, with no Markdown fences or text outside it, matching these fields: decision (ACCEPT, MODIFY, REJECT, or INVESTIGATE), originalRecommendedQuantity (integer from the run request), proposedQuantity (positive integer for ACCEPT or MODIFY; null for REJECT or INVESTIGATE), selectedSupplierId (integer or null), selectedSupplierProductId (integer or null), recommendationSummary (concise string), evidenceReferences (array of exact evidenceReference values returned by tools; when you select a supplier offer, include that offer's exact supplier-offer reference from offerEvidenceReferencesBySupplierProductId), keySupportingFacts (array of concise factual strings), risks (array of strings), unresolvedQuestions (array of strings), constraintEvaluationReferences (array of exact constraint evidence references returned by evaluate_purchase_constraints), confidence (number from 0 to 1 or null). Before returning ACCEPT or MODIFY you must call evaluate_purchase_constraints for exactly the selected supplierProductId and proposed quantity, every constraint must pass, and that evaluation's reference must be in constraintEvaluationReferences; otherwise choose MODIFY with a feasible quantity, REJECT, or INVESTIGATE. ACCEPT keeps the original quantity. MODIFY proposes a different positive quantity. REJECT and INVESTIGATE do not claim a proposed purchase quantity. Use INVESTIGATE when evidence is insufficient, inconsistent, stale, or needs clarification.
             """;
 
     private final EvidenceLookupService lookupService;
@@ -109,6 +109,7 @@ public class AgentExecutionService {
         Set<String> evidenceReferences = new HashSet<>();
         Set<String> constraintReferences = new HashSet<>();
         Map<Long, Long> supplierOffers = new LinkedHashMap<>();
+        Map<String, ConstraintCheck> constraintChecks = new HashMap<>();
         Map<String, Integer> identicalCalls = new HashMap<>();
         int toolExecutions = 0;
         conversation.add(new ModelMessage("user", List.of(ModelPart.text(initialPrompt(request)))));
@@ -122,7 +123,7 @@ public class AgentExecutionService {
                 turn = modelGateway.generate(SYSTEM_INSTRUCTION, List.copyOf(conversation), toolRegistry.definitions());
             } catch (ModelGatewayException exception) {
                 return failRun(runId, sequence, "Gemini request failed: " + safeModelMessage(exception),
-                        exception.getKind().name());
+                        exception.getKind().name(), exception.getDiagnostic());
             } catch (AgentConfigurationException exception) {
                 return failRun(runId, sequence, exception.getMessage(), "GEMINI_CONFIGURATION_ERROR");
             }
@@ -133,7 +134,7 @@ public class AgentExecutionService {
             }
             if (turn.toolCalls().isEmpty()) {
                 return finishRecommendation(runId, request, sequence, turn.text(), evidenceReferences,
-                        constraintReferences, supplierOffers);
+                        constraintReferences, supplierOffers, constraintChecks);
             }
 
             conversation.add(turn.modelMessage());
@@ -173,6 +174,7 @@ public class AgentExecutionService {
                     output.evidenceReferences().forEach(reference -> {
                         if (reference.startsWith("constraints:")) constraintReferences.add(reference);
                     });
+                    recordConstraintCheck(output, constraintChecks);
                     auditService.append(runId, ++sequence[0], AgentEventType.EVIDENCE_OBSERVED, call.name(),
                             Map.of("callId", call.id()), Map.of("evidenceReferences", output.evidenceReferences()),
                             "Tool returned evidence references.");
@@ -188,20 +190,31 @@ public class AgentExecutionService {
     private AgentRunResponse finishRecommendation(UUID runId, AgentRunRequest request, int[] sequence,
                                                    String modelText, Set<String> evidenceReferences,
                                                    Set<String> constraintReferences,
-                                                   Map<Long, Long> supplierOffers) {
+                                                   Map<Long, Long> supplierOffers,
+                                                   Map<String, ConstraintCheck> constraintChecks) {
         PurchasingRecommendation recommendation;
         try {
             if (!StringUtils.hasText(modelText)) throw new IllegalArgumentException("Final response is empty.");
-            recommendation = objectMapper.readValue(modelText, PurchasingRecommendation.class);
+            recommendation = objectMapper.readValue(extractJsonObject(modelText), PurchasingRecommendation.class);
         } catch (Exception exception) {
-            return needsInput(runId, sequence, "Gemini did not return a valid structured recommendation.",
-                    Map.of("errorCode", "INVALID_STRUCTURED_RECOMMENDATION"));
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("errorCode", "INVALID_STRUCTURED_RECOMMENDATION");
+            if (StringUtils.hasText(modelText)) {
+                // The final answer text (not reasoning), truncated, so a parse failure can be diagnosed.
+                details.put("modelTextPreview", modelText.length() > 400 ? modelText.substring(0, 400) : modelText);
+            }
+            return needsInput(runId, sequence, "Gemini did not return a valid structured recommendation.", details);
         }
-        List<String> validationErrors = recommendationValidator.validate(recommendation, request,
-                evidenceReferences, constraintReferences, supplierOffers);
+        List<String> validationErrors = new ArrayList<>(recommendationValidator.validate(recommendation, request,
+                evidenceReferences, constraintReferences, supplierOffers));
+        validationErrors.addAll(recommendationValidator.validateConstraintCoverage(recommendation, constraintChecks));
         if (!validationErrors.isEmpty()) {
-            return needsInput(runId, sequence, "Gemini's structured recommendation failed validation.",
-                    Map.of("errorCode", "RECOMMENDATION_VALIDATION_FAILED", "validationErrors", validationErrors));
+            Map<String, Object> details = new LinkedHashMap<>();
+            details.put("errorCode", "RECOMMENDATION_VALIDATION_FAILED");
+            details.put("validationErrors", validationErrors);
+            // Keep the rejected proposal so reviewers can see what the model suggested and why Java refused it.
+            details.put("rejectedProposal", recommendation);
+            return needsInput(runId, sequence, "Gemini's structured recommendation failed validation.", details);
         }
 
         auditService.append(runId, ++sequence[0], AgentEventType.DECISION_PROPOSED, null, null,
@@ -217,8 +230,16 @@ public class AgentExecutionService {
     }
 
     private AgentRunResponse failRun(UUID runId, int[] sequence, String summary, String errorCode) {
+        return failRun(runId, sequence, summary, errorCode, Map.of());
+    }
+
+    private AgentRunResponse failRun(UUID runId, int[] sequence, String summary, String errorCode,
+                                     Map<String, Object> diagnostic) {
+        Map<String, Object> details = new LinkedHashMap<>();
+        details.put("errorCode", errorCode);
+        details.putAll(diagnostic);
         auditService.finish(runId, ++sequence[0], AgentRunStatus.FAILED, null, null, summary,
-                AgentEventType.RUN_FAILED, null, Map.of("errorCode", errorCode));
+                AgentEventType.RUN_FAILED, null, details);
         return queryService.getRun(runId);
     }
 
@@ -248,6 +269,32 @@ public class AgentExecutionService {
             prompt.append("Additional user instruction: ").append(request.userInstruction());
         }
         return prompt.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void recordConstraintCheck(AgentToolOutput output, Map<String, ConstraintCheck> checks) {
+        if (!(output.asModelResult().get("result") instanceof Map<?, ?> raw)) return;
+        Map<String, Object> result = (Map<String, Object>) raw;
+        if (result.get("evidenceReference") instanceof String reference && reference.startsWith("constraints:")
+                && result.get("evaluatedSupplierProductId") instanceof Number offer
+                && result.get("evaluatedUnits") instanceof Number units
+                && result.get("allConstraintsPassed") instanceof Boolean passed) {
+            checks.put(reference, new ConstraintCheck(offer.longValue(), units.longValue(), passed));
+        }
+    }
+
+    /**
+     * Models sometimes wrap the requested JSON in Markdown fences or add a sentence around it. Extract the outermost
+     * JSON object; the result is still parsed strictly and then validated like any other recommendation.
+     */
+    static String extractJsonObject(String modelText) {
+        String text = modelText.trim();
+        if (text.startsWith("```")) {
+            text = text.replaceFirst("^```[a-zA-Z]*\\s*", "").replaceFirst("\\s*```\\s*$", "");
+        }
+        int start = text.indexOf('{');
+        int end = text.lastIndexOf('}');
+        return start >= 0 && end > start ? text.substring(start, end + 1) : text;
     }
 
     private String canonicalArguments(Map<String, Object> arguments) {

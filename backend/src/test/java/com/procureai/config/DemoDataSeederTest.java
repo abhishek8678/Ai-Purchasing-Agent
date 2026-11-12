@@ -5,7 +5,6 @@ import java.time.LocalDate;
 import java.time.Year;
 import java.util.List;
 
-import com.procureai.domain.entity.AgentRun;
 import com.procureai.domain.entity.DemandForecast;
 import com.procureai.domain.entity.Inventory;
 import com.procureai.domain.entity.Product;
@@ -17,7 +16,6 @@ import com.procureai.domain.entity.StorageCapacity;
 import com.procureai.domain.entity.Supplier;
 import com.procureai.domain.entity.SupplierProduct;
 import com.procureai.domain.entity.Warehouse;
-import com.procureai.domain.enums.AgentRunStatus;
 import com.procureai.domain.enums.PurchaseOrderStatus;
 import com.procureai.domain.enums.SupplierOfferStatus;
 import com.procureai.domain.enums.SupplierStatus;
@@ -167,13 +165,8 @@ class DemoDataSeederTest {
         assertEquals(0L, draftLine.getReceivedUnits());
         assertEquals(alternate.getId(), draftLine.getSupplierProduct().getSupplier().getId());
 
-        AgentRun recommendation = agentRunRepository.findByProductAndWarehouse(product, warehouse).stream()
-                .filter(run -> DemoDataSeeder.DEMO_RUN_SUMMARY.equals(run.getDecisionSummary()))
-                .findFirst().orElseThrow();
-        assertEquals(800L, recommendation.getInputRecommendationUnits());
-        assertEquals(AgentRunStatus.RUNNING, recommendation.getStatus());
-        assertNull(recommendation.getDecision());
-        assertNull(recommendation.getProposedUnits());
+        assertTrue(agentRunRepository.findByProductAndWarehouse(product, warehouse).isEmpty(),
+                "Demo data must not fabricate an unfinished or completed AI investigation.");
 
         long offersBefore = offers.size();
         long forecastsBefore = forecasts.size();

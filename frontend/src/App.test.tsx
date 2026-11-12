@@ -21,10 +21,10 @@ const approval = { approvalId: 'approval-1', agentRunId: 'run-1', approvalStatus
 const order = { id: 10, poNumber: 'PA-approval-1', supplierId: 2, supplierCode: 'SUP-NORTHSTAR', supplierName: 'Northstar Supply', warehouseId: 1, warehouseCode: 'DEL-01', warehouseName: 'Delhi Fulfillment Center', orderDate: '2026-11-12', status: 'APPROVED', currencyCode: 'INR', approvedBy: 'Demo Buyer', approvedAt: '2026-11-12T08:02:00', items: [{ id: 20, supplierProductId: 3, productSku: 'WM-001', productName: 'Wireless Mouse', unitOfMeasure: 'EACH', orderedUnits: 100, confirmedUnits: null, receivedUnits: 0, unitPriceAtOrder: 425, expectedDeliveryDate: '2026-11-18' }] }
 const events = [{ sequenceNumber: 1, eventType: 'RUN_STARTED', toolName: null, argumentsJson: null, resultJson: null, summary: 'Investigation started.', occurredAt: '2026-11-12T08:00:00' }, { sequenceNumber: 2, eventType: 'DECISION_PROPOSED', toolName: null, argumentsJson: null, resultJson: JSON.stringify(recommendation), summary: recommendation.recommendationSummary, occurredAt: '2026-11-12T08:01:00' }]
 
-function setup(options: { offline?: boolean } = {}) {
+function setup(options: { offline?: boolean; emptyRuns?: boolean } = {}) {
   vi.mocked(api.health).mockResolvedValue({ status: 'UP', message: 'ProcureAI API is ready', timestamp: '' })
   vi.mocked(api.products).mockResolvedValue([product]); vi.mocked(api.warehouses).mockResolvedValue([warehouse]); vi.mocked(api.inventory).mockResolvedValue([inventoryRow])
-  vi.mocked(api.runs).mockResolvedValue([run]); vi.mocked(api.approvals).mockResolvedValue([queue]); vi.mocked(api.purchaseOrders).mockResolvedValue([order])
+  vi.mocked(api.runs).mockResolvedValue(options.emptyRuns ? [] : [run]); vi.mocked(api.approvals).mockResolvedValue(options.emptyRuns ? [] : [queue]); vi.mocked(api.purchaseOrders).mockResolvedValue([order])
   vi.mocked(api.purchaseOrder).mockResolvedValue(order)
   vi.mocked(api.offers).mockResolvedValue([offer]); vi.mocked(api.events).mockResolvedValue(events); vi.mocked(api.run).mockResolvedValue(run)
   vi.mocked(api.approve).mockResolvedValue(approval); vi.mocked(api.reject).mockResolvedValue({ ...approval, approvalStatus: 'REJECTED' }); vi.mocked(api.execute).mockResolvedValue({ ...approval, executionStatus: 'SUCCEEDED', purchaseOrderNumber: order.poNumber, purchaseOrderId: order.id })
@@ -93,5 +93,11 @@ describe('ProcureAI dashboard', () => {
     setup({ offline: true })
     expect(await screen.findByRole('alert')).toHaveTextContent('Backend offline')
     expect(screen.getByText('Catalog products')).toBeInTheDocument()
+  })
+
+  it('shows honest empty investigation states when no run has been created', async () => {
+    setup({ emptyRuns: true })
+    expect(await screen.findByText('No investigations yet')).toBeInTheDocument()
+    expect(screen.getByText('Persisted activity will appear after an investigation is run.')).toBeInTheDocument()
   })
 })

@@ -118,7 +118,11 @@ public class PurchasingToolHandlers {
                             }
                         }
                     });
-                    return output(Map.of("evidenceReference", ref, "supplierOffers", json(evidence)), refs, offerSuppliers);
+                    // Show the model the exact per-offer references the validator requires it to cite.
+                    Map<String, String> offerReferences = new LinkedHashMap<>();
+                    offerSuppliers.keySet().forEach(id -> offerReferences.put(String.valueOf(id), offerReference(id)));
+                    return output(Map.of("evidenceReference", ref, "supplierOffers", json(evidence),
+                            "offerEvidenceReferencesBySupplierProductId", offerReferences), refs, offerSuppliers);
                 }));
         tools.add(tool("get_purchasing_budget", "Get allocated, spent, committed, and available purchasing budget for the run's warehouse and current budget date.", emptySchema(),
                 (args, context) -> {
@@ -165,6 +169,10 @@ public class PurchasingToolHandlers {
                     Map<String, Object> result = new LinkedHashMap<>();
                     result.put("evidenceReference", constraintRef);
                     result.put("constraintEvaluation", json(evaluation));
+                    result.put("evaluatedSupplierProductId", supplierProductId);
+                    result.put("evaluatedUnits", proposedUnits);
+                    result.put("allConstraintsPassed", evaluation.results().stream()
+                            .allMatch(item -> item.status() == com.procureai.service.dto.ConstraintStatus.PASS));
                     result.put("supportingEvidenceReferences", refs.stream().filter(ref -> !ref.equals(constraintRef)).toList());
                     return AgentToolOutput.success(result, refs, offers);
                 }));

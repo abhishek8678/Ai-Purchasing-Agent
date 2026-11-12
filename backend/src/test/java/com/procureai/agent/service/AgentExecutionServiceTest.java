@@ -24,6 +24,7 @@ import com.procureai.agent.config.AgentProperties;
 import com.procureai.agent.dto.AgentRunRequest;
 import com.procureai.agent.dto.AgentRunResponse;
 import com.procureai.agent.model.GeminiModelGateway;
+import com.procureai.agent.model.ModelGatewayException;
 import com.procureai.agent.model.ModelMessage;
 import com.procureai.agent.model.ModelPart;
 import com.procureai.agent.model.ModelToolCall;
@@ -50,6 +51,17 @@ class AgentExecutionServiceTest {
             LocalDate.parse("2026-11-12"), LocalDate.parse("2026-11-19"), null);
 
     @Test
+    void extractsJsonObjectFromFencedOrSurroundedModelText() {
+        assertThat(AgentExecutionService.extractJsonObject("```json\n{\"decision\":\"MODIFY\"}\n```"))
+                .isEqualTo("{\"decision\":\"MODIFY\"}");
+        assertThat(AgentExecutionService.extractJsonObject("Here is the result: {\"a\":{\"b\":1}} Thanks."))
+                .isEqualTo("{\"a\":{\"b\":1}}");
+        assertThat(AgentExecutionService.extractJsonObject("{\"decision\":\"REJECT\"}"))
+                .isEqualTo("{\"decision\":\"REJECT\"}");
+        assertThat(AgentExecutionService.extractJsonObject("no json here")).isEqualTo("no json here");
+    }
+
+    @Test
     void executesOnlyModelSelectedToolThenAcceptsEvidenceBasedFinalRecommendation() {
         EvidenceLookupService lookup = Mockito.mock(EvidenceLookupService.class);
         Product product = Mockito.mock(Product.class);
@@ -67,7 +79,10 @@ class AgentExecutionServiceTest {
                 Map.of("type", "object", "properties", Map.of()), Set.of(), Set.of()));
         AgentToolRegistry registry = new AgentToolRegistry(List.of(tool));
         when(tool.execute(Map.of(), new AgentToolContext(runId, request, 1)))
-                .thenReturn(AgentToolOutput.success(Map.of("onHandUnits", 120L), Set.of("inventory:WM-001:DEL-01"), Map.of()));
+                .thenReturn(AgentToolOutput.success(Map.of("onHandUnits", 120L,
+                                "evidenceReference", "constraints:test:1", "evaluatedSupplierProductId", 2L,
+                                "evaluatedUnits", 800L, "allConstraintsPassed", true),
+                        Set.of("inventory:WM-001:DEL-01", "supplier-offer:2", "constraints:test:1"), Map.of(2L, 1L)));
 
         GeminiModelGateway gateway = Mockito.mock(GeminiModelGateway.class);
         ModelToolCall call = new ModelToolCall("call-1", "get_inventory", Map.of());
@@ -75,11 +90,12 @@ class AgentExecutionServiceTest {
                 new ModelTurn(new ModelMessage("model", List.of(ModelPart.call(call))), null, List.of(call)),
                 new ModelTurn(new ModelMessage("model", List.of(ModelPart.text("final"))),
                         "{\"decision\":\"ACCEPT\",\"originalRecommendedQuantity\":800,\"proposedQuantity\":800,"
-                                + "\"selectedSupplierId\":null,\"selectedSupplierProductId\":null,"
+                                + "\"selectedSupplierId\":1,\"selectedSupplierProductId\":2,"
                                 + "\"recommendationSummary\":\"The proposed quantity is supported by available evidence.\","
-                                + "\"evidenceReferences\":[\"inventory:WM-001:DEL-01\"],"
+                                + "\"evidenceReferences\":[\"inventory:WM-001:DEL-01\",\"supplier-offer:2\"],"
                                 + "\"keySupportingFacts\":[\"On hand is 120 units.\"],\"risks\":[],"
-                                + "\"unresolvedQuestions\":[],\"constraintEvaluationReferences\":[],\"confidence\":0.8}", List.of()));
+                                + "\"unresolvedQuestions\":[],\"constraintEvaluationReferences\":[\"constraints:test:1\"],"
+                                + "\"confidence\":0.8}", List.of()));
 
         AgentRunResponse expected = new AgentRunResponse(runId, "WM-001", "DEL-01", 800L,
                 AgentRunStatus.COMPLETED, null, 800L, "The proposed quantity is supported by available evidence.",
@@ -129,5 +145,47 @@ class AgentExecutionServiceTest {
                 .hasMessageContaining("GEMINI_API_KEY is not configured");
         verify(audit, never()).start(any(), any(), any());
         verify(lookup, never()).requireProduct(anyString());
+    }
+
+    @Test
+    void persistsSanitizedGatewayDiagnosticInRunFailedEvent() {
+        EvidenceLookupService lookup = Mockito.mock(EvidenceLookupService.class);
+        Product product = Mockito.mock(Product.class);
+        Warehouse warehouse = Mockito.mock(Warehouse.class);
+        when(lookup.requireProduct("WM-001")).thenReturn(product);
+        when(lookup.requireWarehouse("DEL-01")).thenReturn(warehouse);
+
+        AgentAuditService audit = Mockito.mock(AgentAuditService.class);
+        AgentRun run = Mockito.mock(AgentRun.class);
+        when(run.getId()).thenReturn(runId);
+        when(audit.start(product, warehouse, request)).thenReturn(run);
+        GeminiModelGateway gateway = Mockito.mock(GeminiModelGateway.class);
+        when(gateway.generate(anyString(), anyList(), anyList())).thenThrow(new ModelGatewayException(
+                ModelGatewayException.Kind.API_FAILURE,
+                "Gemini returned an API error; no recommendation was accepted.", new RuntimeException(),
+                Map.of("requestPhase", "GENERATE_CONTENT", "httpStatus", 400,
+                        "classification", "API_FAILURE", "sdkMessage", "invalid request")));
+        AgentRunQueryService query = Mockito.mock(AgentRunQueryService.class);
+        when(query.getRun(runId)).thenReturn(new AgentRunResponse(runId, "WM-001", "DEL-01", 800L,
+                AgentRunStatus.FAILED, null, null, "Gemini request failed", null, null, null));
+        AgentProperties properties = new AgentProperties();
+        properties.setGeminiApiKey("configured-for-mock-test");
+        AgentExecutionService service = new AgentExecutionService(lookup, properties, gateway,
+                new AgentToolRegistry(List.of()), audit, new AgentRecommendationValidator(), query,
+                new ObjectMapper(), Clock.systemUTC());
+
+        AgentRunResponse response = service.start(request);
+
+        assertThat(response.status()).isEqualTo(AgentRunStatus.FAILED);
+        ArgumentCaptor<Object> resultCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(audit).finish(Mockito.eq(runId), Mockito.anyInt(), Mockito.eq(AgentRunStatus.FAILED),
+                Mockito.isNull(), Mockito.isNull(), anyString(),
+                Mockito.eq(com.procureai.domain.enums.AgentEventType.RUN_FAILED), Mockito.isNull(), resultCaptor.capture());
+        assertThat(resultCaptor.getValue()).isInstanceOf(Map.class);
+        assertThat((Map<String, Object>) resultCaptor.getValue()).containsEntry("errorCode", "API_FAILURE")
+                .containsEntry("requestPhase", "GENERATE_CONTENT")
+                .containsEntry("httpStatus", 400)
+                .containsEntry("classification", "API_FAILURE")
+                .containsEntry("sdkMessage", "invalid request");
     }
 }

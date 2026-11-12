@@ -1,0 +1,24 @@
+# Java / Maven
+backend/target/
+backend/.m2repo/
+*.class
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+backend/.env
+frontend/.env.local
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

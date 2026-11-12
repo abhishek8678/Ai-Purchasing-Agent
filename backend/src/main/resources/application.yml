@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: procureai-api
+  datasource:
+    url: jdbc:h2:mem:procureai;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+procureai:
+  agent:
+    gemini-api-key: ${GEMINI_API_KEY:}
+    model: ${GEMINI_MODEL:gemini-3.8-flash}
+    request-timeout: PT60S
+    max-interaction-rounds: 8
+    max-tool-executions: 16
+    max-repeated-identical-tool-calls: 2
+  investigation:
+    inventory-freshness-threshold: PT24H
+    forecast-freshness-threshold: P3D
+    storage-freshness-threshold: P7D
+    forecast-selection-policy: LATEST_COMPLETE_RUN_FALLBACK_TO_LATEST_AVAILABLE_FOR_GAP_REPORTING
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+server:
+  port: 8080

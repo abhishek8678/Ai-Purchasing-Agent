@@ -4,6 +4,7 @@ package com.procureai.domain.enums;
 public enum AgentEventType {
     RUN_STARTED,
     MODEL_REQUESTED,
+    MODEL_RESPONDED,
     TOOL_SELECTED,
     TOOL_EXECUTION_STARTED,
     TOOL_EXECUTION_COMPLETED,

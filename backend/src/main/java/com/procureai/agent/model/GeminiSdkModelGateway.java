@@ -47,22 +47,76 @@ public class GeminiSdkModelGateway implements GeminiModelGateway {
     }
 
     /**
-     * Calls Gemini with a bounded retry on transient failures (timeout, 5xx). Each attempt has its own
-     * timeout because the SDK's own retries are disabled (they all shared one whole-call timeout). The same model is
-     * reused on every attempt, so thought signatures stay valid. Non-transient errors are never retried.
+     * Google's documented placeholder for function-call history that was produced by a different model. Real
+     * signatures are only valid for the model that issued them.
+     */
+    static final byte[] FOREIGN_SIGNATURE_PLACEHOLDER =
+            "skip_thought_signature_validator".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+    /**
+     * Calls Gemini through an ordered model chain. The run sticks to the model that has already answered; only
+     * when that model is out of quota (429) or still failing after bounded retries (timeout / 5xx) does the run
+     * continue on the next configured fallback model. Authentication and bad-request errors are never retried.
      */
     @Override
     public ModelTurn generate(String systemInstruction, List<ModelMessage> conversation,
                               List<AgentToolDefinition> toolDefinitions) {
+        List<String> chain = modelChain(properties.getModel(), properties.getFallbackModels(), lastModel(conversation));
+        List<String> tried = new ArrayList<>();
+        ModelGatewayException last = null;
+        for (String model : chain) {
+            tried.add(model);
+            try {
+                ModelTurn turn = generateWithRetries(model, systemInstruction, conversation, toolDefinitions);
+                if (tried.size() > 1) {
+                    LOGGER.warn("Gemini model {} unavailable; run continued on fallback model {}.", tried.get(0), model);
+                }
+                return turn;
+            } catch (ModelGatewayException exception) {
+                last = exception;
+                if (!canFallBack(exception)) break;
+                LOGGER.warn("Gemini model {} failed ({}); trying next fallback model.", model, exception.getKind());
+            }
+        }
+        Map<String, Object> diagnostic = new LinkedHashMap<>(last.getDiagnostic());
+        diagnostic.put("modelsTried", List.copyOf(tried));
+        throw new ModelGatewayException(last.getKind(), last.getMessage(), last.getCause(), diagnostic);
+    }
+
+    /** Sticky model first (if any), then the primary model and fallbacks, without duplicates. */
+    static List<String> modelChain(String primary, List<String> fallbacks, String sticky) {
+        java.util.LinkedHashSet<String> chain = new java.util.LinkedHashSet<>();
+        if (StringUtils.hasText(sticky)) chain.add(sticky.trim());
+        if (StringUtils.hasText(primary)) chain.add(primary.trim());
+        if (fallbacks != null) fallbacks.stream().filter(StringUtils::hasText).map(String::trim).forEach(chain::add);
+        return List.copyOf(chain);
+    }
+
+    /** The model that issued the most recent thought signature in this conversation, if any. */
+    static String lastModel(List<ModelMessage> conversation) {
+        for (int i = conversation.size() - 1; i >= 0; i--) {
+            for (ModelPart part : conversation.get(i).parts()) {
+                if (part.signatureModel() != null) return part.signatureModel();
+            }
+        }
+        return null;
+    }
+
+    static boolean canFallBack(ModelGatewayException exception) {
+        return exception.getKind() == Kind.RATE_LIMIT || isTransient(exception);
+    }
+
+    private ModelTurn generateWithRetries(String model, String systemInstruction, List<ModelMessage> conversation,
+                                          List<AgentToolDefinition> toolDefinitions) {
         int maxAttempts = Math.max(1, properties.getMaxModelAttempts());
         for (int attempt = 1; ; attempt++) {
             try {
-                return generateOnce(systemInstruction, conversation, toolDefinitions);
+                return generateOnce(model, systemInstruction, conversation, toolDefinitions);
             } catch (ModelGatewayException exception) {
                 if (attempt >= maxAttempts || !isTransient(exception)) {
                     throw withAttempts(exception, attempt);
                 }
-                LOGGER.warn("Gemini attempt {}/{} failed transiently ({}); retrying.", attempt, maxAttempts,
+                LOGGER.warn("Gemini {} attempt {}/{} failed transiently ({}); retrying.", model, attempt, maxAttempts,
                         exception.getKind());
                 sleep(properties.getModelRetryBackoff().multipliedBy(attempt));
             }
@@ -90,7 +144,7 @@ public class GeminiSdkModelGateway implements GeminiModelGateway {
         }
     }
 
-    private ModelTurn generateOnce(String systemInstruction, List<ModelMessage> conversation,
+    private ModelTurn generateOnce(String model, String systemInstruction, List<ModelMessage> conversation,
                                    List<AgentToolDefinition> toolDefinitions) {
         try {
             List<FunctionDeclaration> declarations = toolDefinitions.stream()
@@ -111,7 +165,7 @@ public class GeminiSdkModelGateway implements GeminiModelGateway {
                     .build();
 
             GenerateContentResponse response = client().models.generateContent(
-                    properties.getModel(), toSdkContents(conversation), config);
+                    model, toSdkContents(conversation, model), config);
             Content candidateContent = response.candidates().orElseThrow(() ->
                     new IllegalStateException("Gemini returned no candidate content."))
                     .stream().findFirst().flatMap(candidate -> candidate.content())
@@ -120,12 +174,12 @@ public class GeminiSdkModelGateway implements GeminiModelGateway {
             List<ModelPart> parts = new ArrayList<>();
             List<ModelToolCall> calls = new ArrayList<>();
             StringBuilder text = new StringBuilder();
-            parts.addAll(toModelParts(candidateContent.parts().orElse(List.of()), calls, text));
+            parts.addAll(toModelParts(candidateContent.parts().orElse(List.of()), calls, text, model));
             if (parts.isEmpty()) {
                 throw new IllegalStateException("Gemini returned an empty candidate response.");
             }
             ModelMessage message = new ModelMessage("model", parts);
-            return new ModelTurn(message, text.toString(), calls);
+            return new ModelTurn(message, text.toString(), calls, model);
         } catch (ApiException exception) {
             int code = exception.code();
             Kind kind = code == 401 || code == 403 ? Kind.AUTHENTICATION
@@ -133,7 +187,8 @@ public class GeminiSdkModelGateway implements GeminiModelGateway {
                     : code == 408 || code == 504 ? Kind.TIMEOUT : Kind.API_FAILURE;
             String message = switch (kind) {
                 case AUTHENTICATION -> "Gemini authentication failed. Check GEMINI_API_KEY.";
-                case RATE_LIMIT -> "Gemini rate limit was reached. Try again later.";
+                case RATE_LIMIT -> "Gemini API quota is exhausted for the configured models (the free tier allows "
+                        + "about 20 requests per model per day). Try again later or use a billing-enabled API key.";
                 case TIMEOUT -> "Gemini did not respond before the configured request timeout.";
                 case API_FAILURE -> "Gemini returned an API error; no recommendation was accepted.";
             };
@@ -227,42 +282,52 @@ public class GeminiSdkModelGateway implements GeminiModelGateway {
      * Converts model response parts, keeping each part's opaque thought signature so it can be echoed back.
      * Parts flagged as thoughts (reasoning summaries) are dropped: hidden reasoning is never kept or shown.
      */
-    static List<ModelPart> toModelParts(List<Part> sdkParts, List<ModelToolCall> calls, StringBuilder text) {
+    static List<ModelPart> toModelParts(List<Part> sdkParts, List<ModelToolCall> calls, StringBuilder text,
+                                        String model) {
         List<ModelPart> parts = new ArrayList<>();
         for (Part part : sdkParts) {
             if (part.thought().orElse(false)) continue;
             byte[] signature = part.thoughtSignature().orElse(null);
+            String signatureModel = signature == null ? null : model;
             part.text().ifPresent(value -> {
-                parts.add(ModelPart.text(value).withThoughtSignature(signature));
+                parts.add(ModelPart.text(value).withThoughtSignature(signature, signatureModel));
                 text.append(value);
             });
             part.functionCall().ifPresent(functionCall -> {
                 ModelToolCall call = toToolCall(functionCall);
                 calls.add(call);
-                parts.add(ModelPart.call(call).withThoughtSignature(signature));
+                parts.add(ModelPart.call(call).withThoughtSignature(signature, signatureModel));
             });
         }
         return parts;
     }
 
-    private List<Content> toSdkContents(List<ModelMessage> conversation) {
+    private List<Content> toSdkContents(List<ModelMessage> conversation, String targetModel) {
         return conversation.stream().map(message -> {
-            List<Part> parts = message.parts().stream().map(GeminiSdkModelGateway::toSdkPart).toList();
+            List<Part> parts = message.parts().stream().map(part -> toSdkPart(part, targetModel)).toList();
             return Content.builder().role(message.role()).parts(parts).build();
         }).toList();
     }
 
-    static Part toSdkPart(ModelPart part) {
+    /** Real signature for the model that issued it; the documented placeholder when the run switched models. */
+    static byte[] signatureFor(ModelPart part, String targetModel) {
+        if (part.thoughtSignature() == null) return null;
+        return targetModel != null && targetModel.equals(part.signatureModel())
+                ? part.thoughtSignature() : FOREIGN_SIGNATURE_PLACEHOLDER;
+    }
+
+    static Part toSdkPart(ModelPart part, String targetModel) {
+        byte[] signature = signatureFor(part, targetModel);
         if (part.text() != null) {
             Part.Builder builder = Part.builder().text(part.text());
-            if (part.thoughtSignature() != null) builder.thoughtSignature(part.thoughtSignature());
+            if (signature != null) builder.thoughtSignature(signature);
             return builder.build();
         }
         if (part.toolCall() != null) {
             ModelToolCall call = part.toolCall();
             Part.Builder builder = Part.builder().functionCall(FunctionCall.builder()
                     .id(call.id()).name(call.name()).args(call.arguments()).build());
-            if (part.thoughtSignature() != null) builder.thoughtSignature(part.thoughtSignature());
+            if (signature != null) builder.thoughtSignature(signature);
             return builder.build();
         }
         if (part.toolResult() != null) {

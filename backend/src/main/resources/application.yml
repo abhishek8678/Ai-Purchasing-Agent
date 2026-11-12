@@ -26,6 +26,8 @@ procureai:
     # Per-attempt timeout; transient failures (timeout/429/5xx) are retried up to max-model-attempts times.
     request-timeout: ${GEMINI_REQUEST_TIMEOUT:PT45S}
     max-model-attempts: ${GEMINI_MAX_ATTEMPTS:3}
+    # Free-tier quotas are per model (20 requests/day): continue on these when the primary is exhausted.
+    fallback-models: ${GEMINI_FALLBACK_MODELS:gemini-3.5-flash-lite,gemini-3.1-flash-lite}
     max-interaction-rounds: 8
     max-tool-executions: 16
     max-repeated-identical-tool-calls: 2

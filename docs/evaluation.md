@@ -48,7 +48,11 @@ All tool choices below were made by the model. Java only executed and validated 
 - `gemini-3.8-flash` returned 503 "high demand" or hung past 60 s, so the default model is now `gemini-3.5-flash`.
 - The SDK's hidden retries (up to 5) all shared one 60 s call timeout. These retries are disabled, and the app now retries timeouts and 5xx up to 3 times, each attempt with its own 45 s limit.
 - Gemini 3 models require the opaque `thoughtSignature` on function calls to be echoed back. The app now passes it through in memory without storing it.
-- The free tier allows only **20 requests per model per day**, and one investigation uses about 3 requests. 429 errors are not retried.
+- The free tier allows only **20 requests per model per day**, and one investigation uses about 3 requests. 429 errors are not retried on
+  the same model. Instead the run continues on the next model in `GEMINI_FALLBACK_MODELS`, and later rounds stay on that model.
+  Function-call history from the earlier model is sent with Google's documented placeholder signature. Verified live: with
+  `gemini-3.5-flash` exhausted, a Scenario 1 run completed on `gemini-3.5-flash-lite` (MODIFY → 300, 4 rounds), and every round recorded a
+  `MODEL_RESPONDED` event naming the model.
 
 ## Honest gaps
 

@@ -17,8 +17,8 @@ const recommendation = { decision: 'MODIFY' as const, originalRecommendedQuantit
 const run = { runId: 'run-1', productSku: 'WM-001', warehouseCode: 'DEL-01', originalRecommendedQuantity: 800, status: 'COMPLETED', decision: 'MODIFY', proposedQuantity: 100, recommendationSummary: recommendation.recommendationSummary, recommendation, startedAt: '2026-11-12T08:00:00', completedAt: '2026-11-12T08:01:00' }
 const offer = { id: 3, supplierId: 2, supplierCode: 'SUP-NORTHSTAR', supplierName: 'Northstar Supply', productId: 1, productSku: 'WM-001', warehouseId: 1, warehouseCode: 'DEL-01', status: 'AVAILABLE', minimumOrderQuantity: 50, packSize: 10, leadTimeDays: 6, unitPrice: 425, currencyCode: 'INR' }
 const queue = { run, approval: null }
-const approval = { approvalId: 'approval-1', agentRunId: 'run-1', approvalStatus: 'APPROVED' as const, executionStatus: 'NOT_EXECUTED', approvedQuantity: 100, supplierProductId: 3, supplierId: 2, supplierCode: 'SUP-NORTHSTAR', approverIdentity: 'Demo Buyer', decisionAt: '2026-11-12T08:02:00', rejectionReason: null, idempotencyKey: 'key', purchaseOrderId: null, purchaseOrderNumber: null, executionSummary: null, executionAt: null }
-const order = { id: 10, poNumber: 'PA-approval-1', supplierId: 2, supplierCode: 'SUP-NORTHSTAR', supplierName: 'Northstar Supply', warehouseId: 1, warehouseCode: 'DEL-01', warehouseName: 'Delhi Fulfillment Center', orderDate: '2026-11-12', status: 'APPROVED', currencyCode: 'INR', approvedBy: 'Demo Buyer', approvedAt: '2026-11-12T08:02:00', items: [{ id: 20, supplierProductId: 3, productSku: 'WM-001', productName: 'Wireless Mouse', unitOfMeasure: 'EACH', orderedUnits: 100, confirmedUnits: null, receivedUnits: 0, unitPriceAtOrder: 425, expectedDeliveryDate: '2026-11-18' }] }
+const approval = { approvalId: 'approval-1', agentRunId: 'run-1', approvalStatus: 'APPROVED' as const, executionStatus: 'NOT_EXECUTED', approvedQuantity: 100, supplierProductId: 3, supplierId: 2, supplierCode: 'SUP-NORTHSTAR', approverIdentity: 'Purchasing Buyer', decisionAt: '2026-11-12T08:02:00', rejectionReason: null, idempotencyKey: 'key', purchaseOrderId: null, purchaseOrderNumber: null, executionSummary: null, executionAt: null }
+const order = { id: 10, poNumber: 'PA-approval-1', supplierId: 2, supplierCode: 'SUP-NORTHSTAR', supplierName: 'Northstar Supply', warehouseId: 1, warehouseCode: 'DEL-01', warehouseName: 'Delhi Fulfillment Center', orderDate: '2026-11-12', status: 'APPROVED', currencyCode: 'INR', approvedBy: 'Purchasing Buyer', approvedAt: '2026-11-12T08:02:00', items: [{ id: 20, supplierProductId: 3, productSku: 'WM-001', productName: 'Wireless Mouse', unitOfMeasure: 'EACH', orderedUnits: 100, confirmedUnits: null, receivedUnits: 0, unitPriceAtOrder: 425, expectedDeliveryDate: '2026-11-18' }] }
 const events = [{ sequenceNumber: 1, eventType: 'RUN_STARTED', toolName: null, argumentsJson: null, resultJson: null, summary: 'Investigation started.', occurredAt: '2026-11-12T08:00:00' }, { sequenceNumber: 2, eventType: 'DECISION_PROPOSED', toolName: null, argumentsJson: null, resultJson: JSON.stringify(recommendation), summary: recommendation.recommendationSummary, occurredAt: '2026-11-12T08:01:00' }]
 
 function setup(options: { offline?: boolean; emptyRuns?: boolean } = {}) {
@@ -62,7 +62,7 @@ describe('ProcureAI dashboard', () => {
     await user.click(screen.getByRole('button', { name: /Review recommendation/ }))
     expect(await screen.findByRole('option', { name: /Northstar Supply/ })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Approve plan/ }))
-    await waitFor(() => expect(api.approve).toHaveBeenCalledWith('run-1', 100, 3, 'Demo Buyer'))
+    await waitFor(() => expect(api.approve).toHaveBeenCalledWith('run-1', 100, 3, 'Purchasing Buyer'))
     expect(api.execute).not.toHaveBeenCalled()
     await waitFor(() => expect(api.approvals).toHaveBeenCalledTimes(2))
     await user.click(await screen.findByRole('button', { name: /Execute purchase/ }))
@@ -75,7 +75,7 @@ describe('ProcureAI dashboard', () => {
     await user.click(screen.getByRole('button', { name: /Review recommendation/ }))
     await user.type(await screen.findByRole('textbox', { name: 'Rejection reason' }), 'Budget review required')
     await user.click(screen.getByRole('button', { name: /^Reject$/ }))
-    await waitFor(() => expect(api.reject).toHaveBeenCalledWith('run-1', 'Demo Buyer', 'Budget review required'))
+    await waitFor(() => expect(api.reject).toHaveBeenCalledWith('run-1', 'Purchasing Buyer', 'Budget review required'))
   })
 
   it('shows real purchase order details when expanded', async () => {

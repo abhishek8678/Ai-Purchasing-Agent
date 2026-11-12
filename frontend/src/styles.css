@@ -12,3 +12,17 @@
 .button{@apply inline-flex items-center justify-center gap-2}
 .panel{@apply rounded-lg bg-white}
 
+
+/* Review guide (overview) */
+.review-guide{margin-top:16px}
+.guide-steps{list-style:none;margin:4px 0 16px;padding:0;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.guide-steps li{display:flex;flex-direction:column;gap:4px;padding:12px;background:#fafbfa;border:1px solid #eef1ef;border-radius:8px;font-size:12.5px;line-height:1.45;color:#5b6660}
+.guide-steps strong{color:#1d2a22;font-size:13px}
+.scenario-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.scenario-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:13px;text-align:left;background:#fff;border:1px solid #dfe6e1;border-radius:8px;cursor:pointer;font:inherit;transition:border-color .15s,box-shadow .15s}
+.scenario-card:hover,.scenario-card:focus-visible{border-color:#247348;box-shadow:0 2px 8px #24734826;outline:none}
+.scenario-card-title{font-weight:600;font-size:13px;color:#1d2a22}
+.scenario-card-detail{font-size:12px;color:#6b766f}
+.scenario-card-action{display:inline-flex;align-items:center;gap:4px;margin-top:2px;font-size:12px;font-weight:600;color:#247348}
+@media(max-width:1200px){.guide-steps,.scenario-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:720px){.guide-steps,.scenario-grid{grid-template-columns:1fr}}

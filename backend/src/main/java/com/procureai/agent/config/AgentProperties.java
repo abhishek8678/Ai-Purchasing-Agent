@@ -18,6 +18,8 @@ public class AgentProperties {
     private int maxRepeatedIdenticalToolCalls = 2;
     /** Attempts per model round for transient failures (timeout, 5xx). Each attempt has its own timeout. */
     private int maxModelAttempts = 3;
+    /** Models tried in order when the primary model is out of quota or keeps failing. Each has its own quota. */
+    private java.util.List<String> fallbackModels = java.util.List.of("gemini-3.5-flash-lite", "gemini-3.1-flash-lite");
     private Duration modelRetryBackoff = Duration.ofSeconds(2);
 
     public void validateLimits() {
@@ -40,6 +42,10 @@ public class AgentProperties {
     public void setMaxInteractionRounds(int maxInteractionRounds) { this.maxInteractionRounds = maxInteractionRounds; }
     public int getMaxToolExecutions() { return maxToolExecutions; }
     public void setMaxToolExecutions(int maxToolExecutions) { this.maxToolExecutions = maxToolExecutions; }
+    public java.util.List<String> getFallbackModels() { return fallbackModels; }
+    public void setFallbackModels(java.util.List<String> fallbackModels) {
+        this.fallbackModels = fallbackModels == null ? java.util.List.of() : java.util.List.copyOf(fallbackModels);
+    }
     public int getMaxModelAttempts() { return maxModelAttempts; }
     public void setMaxModelAttempts(int maxModelAttempts) { this.maxModelAttempts = maxModelAttempts; }
     public Duration getModelRetryBackoff() { return modelRetryBackoff; }

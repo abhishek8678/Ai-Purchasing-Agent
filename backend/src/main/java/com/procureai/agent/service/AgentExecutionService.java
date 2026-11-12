@@ -132,6 +132,13 @@ public class AgentExecutionService {
                 return needsInput(runId, sequence, "Gemini returned no usable model response.",
                         Map.of("errorCode", "EMPTY_MODEL_RESPONSE"));
             }
+            if (turn.model() != null) {
+                boolean fallback = !turn.model().equals(properties.getModel());
+                auditService.append(runId, ++sequence[0], AgentEventType.MODEL_RESPONDED, null, null,
+                        Map.of("model", turn.model(), "round", round, "fallbackModelUsed", fallback),
+                        fallback ? "Primary model unavailable; " + turn.model() + " answered this round."
+                                : turn.model() + " answered this round.");
+            }
             if (turn.toolCalls().isEmpty()) {
                 return finishRecommendation(runId, request, sequence, turn.text(), evidenceReferences,
                         constraintReferences, supplierOffers, constraintChecks);

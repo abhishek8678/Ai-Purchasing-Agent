@@ -44,10 +44,10 @@ Requirements: Java 17, Maven 3.9+, Node.js 22+.
 
 Optional local profile (`-Dspring-boot.run.profiles=local`): enables the H2 console and detailed actuator health.
 
-## Demo walkthrough
+## Reviewer walkthrough
 
-1. **AI Purchasing Agent** page → choose an *Assignment scenario preset* (1–4) → **Start investigation**.
-   A preset only fills in the form; Gemini still decides which tools to call.
+1. **Overview → Review guide** → click any of the four scenario cards. It opens the AI Purchasing Agent page with that
+   scenario filled in → **Start investigation**. A preset only fills in the form; Gemini still decides which tools to call.
 2. Inspect the recommendation and the **investigation timeline**. It shows each tool Gemini selected, its arguments,
    the Java result, the evidence references and the final validated decision.
 3. **Approvals** → review an ACCEPT/MODIFY run → choose quantity and supplier offer → **Approve plan**.
@@ -97,8 +97,9 @@ Notes:
   restart reseeds clean demo data. That is convenient for demos, but nothing persists.
 - The app has **no authentication**. Anyone with the URL can run investigations (which use your Gemini quota) and
   approve internal demo POs. Share the URL only with evaluators.
-- Free Gemini keys allow 20 requests per model per day (about 6 investigations). For a live demo, enable billing on the key or set
-  `GEMINI_MODEL` to another model that still has quota.
+- Free Gemini keys allow 20 requests per model per day (about 6 investigations per model). When the primary model's quota is used up, the
+  app automatically continues on `GEMINI_FALLBACK_MODELS` (default `gemini-3.5-flash-lite,gemini-3.1-flash-lite`). The model that
+  answered each round is shown in the timeline (`Model Responded`). For heavy use, enable billing on the key.
 
 Live AI results and evaluation: see [`docs/evaluation.md`](docs/evaluation.md).
 

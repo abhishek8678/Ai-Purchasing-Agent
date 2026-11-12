@@ -135,13 +135,37 @@ class GeminiSdkModelGatewayTest {
         List<ModelToolCall> calls = new java.util.ArrayList<>();
         StringBuilder text = new StringBuilder();
 
-        List<ModelPart> parts = GeminiSdkModelGateway.toModelParts(List.of(thoughtPart, callPart), calls, text);
+        List<ModelPart> parts = GeminiSdkModelGateway.toModelParts(List.of(thoughtPart, callPart), calls, text,
+                "model-a");
 
         assertThat(parts).singleElement().satisfies(part -> assertThat(part.thoughtSignature()).containsExactly(1, 2, 3));
         assertThat(text.toString()).doesNotContain("hidden reasoning");
         assertThat(calls).extracting(ModelToolCall::name).containsExactly("get_inventory");
-        assertThat(GeminiSdkModelGateway.toSdkPart(parts.get(0)).thoughtSignature()).hasValueSatisfying(
+        // Same model: the real signature is echoed back.
+        assertThat(GeminiSdkModelGateway.toSdkPart(parts.get(0), "model-a").thoughtSignature()).hasValueSatisfying(
                 value -> assertThat(value).containsExactly(1, 2, 3));
+        // Run switched to a fallback model: the documented placeholder replaces the foreign signature.
+        assertThat(GeminiSdkModelGateway.toSdkPart(parts.get(0), "model-b").thoughtSignature()).hasValueSatisfying(
+                value -> assertThat(value).isEqualTo(GeminiSdkModelGateway.FOREIGN_SIGNATURE_PLACEHOLDER));
+        assertThat(GeminiSdkModelGateway.lastModel(List.of(new ModelMessage("model", parts)))).isEqualTo("model-a");
+    }
+
+    @Test
+    void buildsStickyModelChainAndFallsBackOnlyOnQuotaOrTransientErrors() {
+        assertThat(GeminiSdkModelGateway.modelChain("primary", List.of("lite", "primary", " "), null))
+                .containsExactly("primary", "lite");
+        // Once a fallback answered, later rounds start with it.
+        assertThat(GeminiSdkModelGateway.modelChain("primary", List.of("lite", "lite2"), "lite"))
+                .containsExactly("lite", "primary", "lite2");
+
+        assertThat(GeminiSdkModelGateway.canFallBack(GeminiSdkModelGateway.gatewayException(Kind.RATE_LIMIT, "q",
+                new RuntimeException(), 429, "RESOURCE_EXHAUSTED", "quota"))).isTrue();
+        assertThat(GeminiSdkModelGateway.canFallBack(GeminiSdkModelGateway.gatewayException(Kind.TIMEOUT, "t",
+                new RuntimeException(), null, null, null))).isTrue();
+        assertThat(GeminiSdkModelGateway.canFallBack(GeminiSdkModelGateway.gatewayException(Kind.AUTHENTICATION, "a",
+                new RuntimeException(), 403, "PERMISSION_DENIED", "denied"))).isFalse();
+        assertThat(GeminiSdkModelGateway.canFallBack(GeminiSdkModelGateway.gatewayException(Kind.API_FAILURE, "b",
+                new RuntimeException(), 400, "INVALID_ARGUMENT", "bad"))).isFalse();
     }
 
     @Test

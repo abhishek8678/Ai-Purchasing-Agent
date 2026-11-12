@@ -1,5 +1,8 @@
 # ProcureAI — AI Purchasing Agent
 
+**Live app: https://procureai-01o4.onrender.com**. Open it and start from *Overview → Review guide*.
+The free hosting tier sleeps when idle, so the first load can take about a minute.
+
 ProcureAI is a full-stack purchasing agent for a retail / quick-commerce buyer. Given a purchasing situation
 (for example "the system recommends buying 800 units"), a Gemini model **chooses which evidence to gather**
 through read-only tools. Java executes those tools and returns the results, then **independently validates**
@@ -84,6 +87,8 @@ The data describes situations only. It never encodes the expected AI decision.
 sent to suppliers, and the database is in-memory. This is a local demo, not a production purchasing system.
 
 ## Deploy (single Docker image, Render free tier)
+
+**Deployed instance:** https://procureai-01o4.onrender.com (health check: https://procureai-01o4.onrender.com/api/health)
 
 The root `Dockerfile` builds the React app, bundles it into the Spring Boot jar and serves both on one port
 (`PORT`, default 8080). `render.yaml` is a ready-made Render Blueprint.

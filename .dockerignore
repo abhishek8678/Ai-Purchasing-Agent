@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+!.env.example
+.vscode
+.claude
+backend/target
+backend/.m2repo
+frontend/node_modules
+frontend/dist
+**/*.log

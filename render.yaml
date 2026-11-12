@@ -1,0 +1,15 @@
+# Render Blueprint: New > Blueprint > select this repository.
+# You will be prompted for GEMINI_API_KEY (stored as a secret, never in git).
+services:
+  - type: web
+    name: procureai
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
